@@ -228,7 +228,7 @@ static int receive(uint8_t *req, uint8_t _slave)
 }
 
 
-static void reply(uint16_t *tab_reg, uint16_t nb_reg,
+static void reply(ModbusinoInterface *intf, uint16_t nb_reg,
 		  uint8_t *req, uint8_t req_length, uint8_t _slave)
 {
     uint8_t slave = req[_MODBUS_RTU_SLAVE];
@@ -258,16 +258,19 @@ static void reply(uint16_t *tab_reg, uint16_t nb_reg,
             rsp_length = build_response_basis(slave, function, rsp);
             rsp[rsp_length++] = nb << 1;
             for (i = address; i < address + nb; i++) {
-                rsp[rsp_length++] = tab_reg[i] >> 8;
-                rsp[rsp_length++] = tab_reg[i] & 0xFF;
+                uint16_t v = intf->getRegister(i);
+                rsp[rsp_length++] = v >> 8;
+                rsp[rsp_length++] = v & 0xFF;
             }
         } else {
             uint16_t i, j;
 
             for (i = address, j = 6; i < address + nb; i++, j += 2) {
                 /* 6 and 7 = first value */
-                tab_reg[i] = (req[_MODBUS_RTU_FUNCTION + j] << 8) +
+                int16_t v = (req[_MODBUS_RTU_FUNCTION + j] << 8) +
                     req[_MODBUS_RTU_FUNCTION + j + 1];
+
+                intf->setRegister(i, v);
             }
 
             rsp_length = build_response_basis(slave, function, rsp);
@@ -280,7 +283,63 @@ static void reply(uint16_t *tab_reg, uint16_t nb_reg,
     send_msg(rsp, rsp_length);
 }
 
+class RegisterBank : public ModbusinoInterface
+{
+public:
+    RegisterBank(uint16_t *tab_reg, uint16_t nb_reg);
+
+    uint16_t getRegister(uint16_t address);
+
+    void setRegister(uint16_t address, uint16_t value);
+
+protected:
+    uint16_t *tabReg;
+    uint16_t nbReg;
+};
+    
+RegisterBank::RegisterBank(uint16_t *tab_reg, uint16_t nb_reg)
+    : tabReg(tab_reg), nbReg(nb_reg)
+{
+}
+
+uint16_t RegisterBank::getRegister(uint16_t address)
+{
+    if (address < nbReg)
+        return tabReg[address];
+    else
+        return 0;
+}
+
+void RegisterBank::setRegister(uint16_t address,
+                               uint16_t value)
+{
+    if (address < nbReg)
+        tabReg[address] = value;
+}
+
 int ModbusinoSlave::loop(uint16_t* tab_reg, uint16_t nb_reg)
+{
+    int rc = 0;
+    uint8_t req[_MODBUSINO_RTU_MAX_ADU_LENGTH];
+
+    RegisterBank rb(tab_reg, nb_reg);
+
+    if (Serial.available()) {
+	rc = receive(req, _slave);
+	if (rc > 0) {
+	    reply(&rb, nb_reg, req, rc, _slave);
+	}
+    }
+
+    /* Returns a positive value if successful,
+       0 if a slave filtering has occured,
+       -1 if an undefined error has occured,
+       -2 for MODBUS_EXCEPTION_ILLEGAL_FUNCTION
+       etc */
+    return rc;
+}
+
+int ModbusinoSlave::loop(ModbusinoInterface *intf, uint16_t nb_reg)
 {
     int rc = 0;
     uint8_t req[_MODBUSINO_RTU_MAX_ADU_LENGTH];
@@ -288,7 +347,7 @@ int ModbusinoSlave::loop(uint16_t* tab_reg, uint16_t nb_reg)
     if (Serial.available()) {
 	rc = receive(req, _slave);
 	if (rc > 0) {
-	    reply(tab_reg, nb_reg, req, rc, _slave);
+	    reply(intf, nb_reg, req, rc, _slave);
 	}
     }
 

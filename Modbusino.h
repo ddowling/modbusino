@@ -26,11 +26,23 @@
 #define MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS 2
 #define MODBUS_EXCEPTION_ILLEGAL_DATA_VALUE   3
 
+class ModbusinoInterface {
+public:
+    virtual uint16_t getRegister(uint16_t address) = 0;
+    virtual void setRegister(uint16_t address, uint16_t value) = 0;
+};
+
 class ModbusinoSlave {
 public:
     ModbusinoSlave(uint8_t slave);
     void setup(long baud);
+
     int loop(uint16_t *tab_reg, uint16_t nb_reg);
+
+    // Allow client to map registers in some switch statements. Useful when
+    // querying SPI or I2C devices
+    int loop(ModbusinoInterface *intf, uint16_t nb_reg);
+
 private:
     int _slave;
 };
